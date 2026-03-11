@@ -8,20 +8,33 @@ struct ChecklistItem: Identifiable {
     var isDone: Bool
 }
 
-struct NoteItem: Identifiable {
-    let id = UUID()
-    var title: String
-    var body: String
-    var date: Date = Date()
+// MARK: - App Store
+
+class AppStore: ObservableObject {
+    @Published var checklistItems: [ChecklistItem] = []
+    @AppStorage("userName") var userName: String = "Friend"
+    @AppStorage("notificationsEnabled") var notificationsEnabled: Bool = true
+    @AppStorage("dailyGoal") var dailyGoal: Int = 5
+
+    var completedCount: Int { checklistItems.filter { $0.isDone }.count }
+    var totalCount: Int { checklistItems.count }
+    var pendingCount: Int { checklistItems.filter { !$0.isDone }.count }
+    var progress: Double {
+        totalCount == 0 ? 0 : Double(completedCount) / Double(totalCount)
+    }
+    var goalProgress: Double {
+        dailyGoal == 0 ? 0 : min(Double(completedCount) / Double(dailyGoal), 1.0)
+    }
 }
 
-// MARK: - Main App Entry
+// MARK: - Main App
 
 @main
 struct ProductivityApp: App {
+    @StateObject private var store = AppStore()
     var body: some Scene {
         WindowGroup {
-            MainTabView()
+            MainTabView().environmentObject(store)
         }
     }
 }
@@ -29,45 +42,17 @@ struct ProductivityApp: App {
 // MARK: - Tab View
 
 struct MainTabView: View {
-    @StateObject private var store = AppStore()
-
+    @EnvironmentObject var store: AppStore
     var body: some View {
         TabView {
             HomeView()
-                .tabItem {
-                    Label("Home", systemImage: "house.fill")
-                }
-
+                .tabItem { Label("Home", systemImage: "house.fill") }
             ChecklistView()
-                .tabItem {
-                    Label("Checklist", systemImage: "checkmark.square.fill")
-                }
-
-            FocusView()
-                .tabItem {
-                    Label("Focus", systemImage: "timer")
-                }
-
-            NotesView()
-                .tabItem {
-                    Label("Notes", systemImage: "note.text")
-                }
+                .tabItem { Label("Checklist", systemImage: "checkmark.square.fill") }
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .accentColor(.red)
-        .environmentObject(store)
-    }
-}
-
-// MARK: - App Store
-
-class AppStore: ObservableObject {
-    @Published var checklistItems: [ChecklistItem] = []
-    @Published var notes: [NoteItem] = []
-
-    var completedCount: Int { checklistItems.filter { $0.isDone }.count }
-    var totalCount: Int { checklistItems.count }
-    var progress: Double {
-        totalCount == 0 ? 0 : Double(completedCount) / Double(totalCount)
     }
 }
 
@@ -78,11 +63,17 @@ struct HomeView: View {
 
     var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 0..<12: return "Good morning"
-        case 12..<17: return "Good afternoon"
-        default: return "Good evening"
-        }
+        if hour < 12 { return "Good morning" }
+        else if hour < 17 { return "Good afternoon" }
+        else { return "Good evening" }
+    }
+
+    var motivationalMessage: String {
+        if store.totalCount == 0 { return "Add some tasks to get started!" }
+        if store.completedCount == store.totalCount { return "You crushed it today! 🎉" }
+        if store.goalProgress >= 1.0 { return "Daily goal smashed! Keep going 💪" }
+        if store.completedCount == 0 { return "Let's get things done! 🚀" }
+        return "\(store.pendingCount) task\(store.pendingCount == 1 ? "" : "s") left to go!"
     }
 
     var body: some View {
@@ -90,9 +81,9 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 20) {
 
-                    // Hero Card
-                    ZStack(alignment: .topLeading) {
-                        RoundedRectangle(cornerRadius: 20)
+                    // Hero greeting card
+                    ZStack(alignment: .bottomLeading) {
+                        RoundedRectangle(cornerRadius: 24)
                             .fill(
                                 LinearGradient(
                                     colors: [Color(hex: "1a1a2e"), Color(hex: "0f3460")],
@@ -100,97 +91,158 @@ struct HomeView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 160)
+                            .frame(maxWidth: .infinity, minHeight: 170)
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(Date(), style: .date)
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.6))
-                                .textCase(.uppercase)
+                        Circle()
+                            .fill(Color.red.opacity(0.15))
+                            .frame(width: 120, height: 120)
+                            .offset(x: 260, y: -60)
+                        Circle()
+                            .fill(Color.orange.opacity(0.1))
+                            .frame(width: 80, height: 80)
+                            .offset(x: 300, y: 20)
 
-                            Text("\(greeting) 👋")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(greeting + ", \(store.userName)!")
                                 .font(.system(size: 26, weight: .bold, design: .serif))
                                 .foregroundColor(.white)
+                            Text(motivationalMessage)
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.7))
+                            Text(Date(), style: .date)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.5))
+                                .padding(.top, 4)
+                        }
+                        .padding(24)
+                    }
+                    .padding(.horizontal)
+                    .clipped()
 
-                            HStack(spacing: 12) {
-                                ProgressView(value: store.progress)
-                                    .progressViewStyle(LinearProgressViewStyle(tint: .red))
-                                    .frame(maxWidth: .infinity)
+                    // Stats cards
+                    HStack(spacing: 12) {
+                        StatCard(value: "\(store.totalCount)",     label: "Total",     icon: "list.bullet",           color: .blue)
+                        StatCard(value: "\(store.completedCount)", label: "Done",      icon: "checkmark.circle.fill", color: .green)
+                        StatCard(value: "\(store.pendingCount)",   label: "Remaining", icon: "clock.fill",            color: .orange)
+                    }
+                    .padding(.horizontal)
 
-                                Text("\(store.completedCount)/\(store.totalCount)")
-                                    .font(.caption.bold())
-                                    .foregroundColor(.white)
+                    // Daily goal card
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("Daily Goal", systemImage: "target")
+                                .font(.subheadline.bold())
+                            Spacer()
+                            Text("\(store.completedCount) / \(store.dailyGoal)")
+                                .font(.subheadline.bold())
+                                .foregroundColor(.red)
+                        }
+
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(.systemGray5))
+                                    .frame(height: 10)
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(
+                                        LinearGradient(colors: [.red, .orange],
+                                                       startPoint: .leading, endPoint: .trailing)
+                                    )
+                                    .frame(width: geo.size.width * store.goalProgress, height: 10)
+                                    .animation(.easeInOut(duration: 0.5), value: store.goalProgress)
                             }
                         }
-                        .padding(20)
+                        .frame(height: 10)
+
+                        Text(store.goalProgress >= 1.0
+                             ? "🎯 Goal complete!"
+                             : "\(store.dailyGoal - min(store.completedCount, store.dailyGoal)) more to hit your goal")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(16)
+                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     .padding(.horizontal)
 
-                    // Stats Row
-                    HStack(spacing: 12) {
-                        StatCard(icon: "📋", value: "\(store.totalCount)", label: "Tasks")
-                        StatCard(icon: "✅", value: "\(store.completedCount)", label: "Done")
-                        StatCard(icon: "📝", value: "\(store.notes.count)", label: "Notes")
-                    }
-                    .padding(.horizontal)
+                    // Task summary breakdown
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Summary")
+                            .font(.subheadline.bold())
+                            .padding(.horizontal)
 
-                    // Recent Tasks
-                    if !store.checklistItems.isEmpty {
+                        VStack(spacing: 0) {
+                            SummaryRow(label: "Tasks created",   value: store.totalCount,     icon: "plus.circle",           color: .blue)
+                            Divider().padding(.leading, 44)
+                            SummaryRow(label: "Completed",       value: store.completedCount, icon: "checkmark.circle.fill", color: .green)
+                            Divider().padding(.leading, 44)
+                            SummaryRow(label: "Still pending",   value: store.pendingCount,   icon: "circle",                color: .orange)
+                            Divider().padding(.leading, 44)
+                            SummaryRow(label: "Completion rate",
+                                       value: store.totalCount == 0 ? 0 : Int(store.progress * 100),
+                                       icon: "percent",
+                                       color: .purple,
+                                       suffix: "%")
+                        }
+                        .background(Color(.systemBackground))
+                        .cornerRadius(16)
+                        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                        .padding(.horizontal)
+                    }
+
+                    // Recently completed
+                    if store.completedCount > 0 {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Recent Tasks")
-                                .font(.caption.bold())
-                                .foregroundColor(.secondary)
-                                .textCase(.uppercase)
+                            Text("Recently Completed")
+                                .font(.subheadline.bold())
                                 .padding(.horizontal)
 
-                            ForEach(store.checklistItems.suffix(4).reversed()) { item in
+                            ForEach(store.checklistItems.filter { $0.isDone }.suffix(3).reversed()) { item in
                                 HStack(spacing: 10) {
-                                    Image(systemName: item.isDone ? "checkmark.square.fill" : "square")
-                                        .foregroundColor(item.isDone ? .green : .gray)
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
                                     Text(item.title)
-                                        .strikethrough(item.isDone)
-                                        .foregroundColor(item.isDone ? .secondary : .primary)
+                                        .strikethrough()
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
                                 .background(Color(.systemBackground))
                                 .cornerRadius(12)
-                                .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+                                .shadow(color: .black.opacity(0.04), radius: 4, y: 1)
                                 .padding(.horizontal)
                             }
                         }
-                    } else {
-                        VStack(spacing: 8) {
-                            Text("🚀")
-                                .font(.system(size: 48))
-                            Text("You're all clear!")
-                                .font(.headline)
-                            Text("Add tasks in the Checklist tab.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(40)
                     }
+
+                    Spacer(minLength: 20)
                 }
                 .padding(.vertical)
             }
-            .navigationTitle("FlowDesk")
-            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Home")
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
         }
     }
 }
 
+// MARK: - Stat Card
+
 struct StatCard: View {
-    let icon: String
     let value: String
     let label: String
+    let icon: String
+    let color: Color
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(icon).font(.title2)
-            Text(value).font(.title2.bold())
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundColor(color)
+                .font(.title3)
+            Text(value)
+                .font(.title2.bold())
             Text(label)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.secondary)
@@ -204,11 +256,38 @@ struct StatCard: View {
     }
 }
 
+// MARK: - Summary Row
+
+struct SummaryRow: View {
+    let label: String
+    let value: Int
+    let icon: String
+    let color: Color
+    var suffix: String = ""
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(color)
+                .frame(width: 24)
+                .padding(.leading, 14)
+            Text(label)
+                .font(.subheadline)
+            Spacer()
+            Text("\(value)\(suffix)")
+                .font(.subheadline.bold())
+                .padding(.trailing, 14)
+        }
+        .padding(.vertical, 12)
+    }
+}
+
 // MARK: - Checklist View
 
 struct ChecklistView: View {
     @EnvironmentObject var store: AppStore
-    @State private var newItemTitle: String = ""
+    @State private var newItemTitle = ""
+    @State private var showingClearConfirm = false
 
     var pending: [ChecklistItem] { store.checklistItems.filter { !$0.isDone } }
     var done: [ChecklistItem]    { store.checklistItems.filter {  $0.isDone } }
@@ -216,7 +295,6 @@ struct ChecklistView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Add bar
                 HStack(spacing: 10) {
                     TextField("Add a new task...", text: $newItemTitle)
                         .padding(12)
@@ -231,7 +309,7 @@ struct ChecklistView: View {
                             .padding(.horizontal, 18)
                             .padding(.vertical, 12)
                             .background(
-                                LinearGradient(colors: [.red, Color.orange],
+                                LinearGradient(colors: [.red, .orange],
                                                startPoint: .leading, endPoint: .trailing)
                             )
                             .cornerRadius(12)
@@ -240,35 +318,60 @@ struct ChecklistView: View {
                 .padding()
                 .background(Color(.systemGroupedBackground))
 
-                List {
-                    if !pending.isEmpty {
-                        Section(header: Text("To Do · \(pending.count)")) {
-                            ForEach(pending) { item in
-                                ChecklistRow(item: item)
+                if store.checklistItems.isEmpty {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "checkmark.square")
+                            .font(.system(size: 52))
+                            .foregroundColor(.secondary)
+                        Text("No tasks yet")
+                            .font(.headline)
+                        Text("Type something above and tap Add!")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                } else {
+                    List {
+                        if !pending.isEmpty {
+                            Section(header: Text("To Do — \(pending.count)")) {
+                                ForEach(pending) { item in
+                                    ChecklistRow(item: item)
+                                }
+                                .onDelete { offsets in
+                                    let ids = offsets.map { pending[$0].id }
+                                    store.checklistItems.removeAll { ids.contains($0.id) }
+                                }
                             }
-                            .onDelete { offsets in
-                                let ids = offsets.map { pending[$0].id }
-                                store.checklistItems.removeAll { ids.contains($0.id) }
+                        }
+                        if !done.isEmpty {
+                            Section(header: Text("Completed — \(done.count)")) {
+                                ForEach(done) { item in
+                                    ChecklistRow(item: item)
+                                }
+                                .onDelete { offsets in
+                                    let ids = offsets.map { done[$0].id }
+                                    store.checklistItems.removeAll { ids.contains($0.id) }
+                                }
                             }
                         }
                     }
-
-                    if !done.isEmpty {
-                        Section(header: Text("Completed · \(done.count)")) {
-                            ForEach(done) { item in
-                                ChecklistRow(item: item)
-                            }
-                            .onDelete { offsets in
-                                let ids = offsets.map { done[$0].id }
-                                store.checklistItems.removeAll { ids.contains($0.id) }
-                            }
-                        }
-                    }
+                    .listStyle(.insetGrouped)
                 }
-                .listStyle(.insetGrouped)
             }
             .navigationTitle("Checklist")
-            .background(Color(.systemGroupedBackground))
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if !store.checklistItems.isEmpty {
+                        Button("Clear All") { showingClearConfirm = true }
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            .confirmationDialog("Delete all tasks?", isPresented: $showingClearConfirm, titleVisibility: .visible) {
+                Button("Delete All", role: .destructive) { store.checklistItems.removeAll() }
+            }
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
         }
     }
 
@@ -279,6 +382,8 @@ struct ChecklistView: View {
         newItemTitle = ""
     }
 }
+
+// MARK: - Checklist Row
 
 struct ChecklistRow: View {
     @EnvironmentObject var store: AppStore
@@ -305,253 +410,142 @@ struct ChecklistRow: View {
     }
 }
 
-// MARK: - Focus / Pomodoro View
+// MARK: - Settings View
 
-struct FocusView: View {
-    @State private var mode: FocusMode = .work
-    @State private var timeRemaining: Int = 25 * 60
-    @State private var isRunning = false
-    @State private var timer: Timer? = nil
-
-    enum FocusMode: String, CaseIterable {
-        case work = "🎯 Focus"
-        case shortBreak = "☕ Break"
-
-        var duration: Int {
-            switch self {
-            case .work: return 25 * 60
-            case .shortBreak: return 5 * 60
-            }
-        }
-    }
-
-    var progress: Double {
-        1.0 - Double(timeRemaining) / Double(mode.duration)
-    }
-
-    var timeString: String {
-        let m = timeRemaining / 60
-        let s = timeRemaining % 60
-        return String(format: "%02d:%02d", m, s)
-    }
-
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 32) {
-
-                // Mode Picker
-                Picker("Mode", selection: $mode) {
-                    ForEach(FocusMode.allCases, id: \.self) { m in
-                        Text(m.rawValue).tag(m)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .onChange(of: mode) { _ in resetTimer() }
-
-                // Ring Timer
-                ZStack {
-                    Circle()
-                        .stroke(Color(.systemGray5), lineWidth: 12)
-                        .frame(width: 200, height: 200)
-
-                    Circle()
-                        .trim(from: 0, to: progress)
-                        .stroke(
-                            LinearGradient(
-                                colors: mode == .work ? [.red, .orange] : [.green, .mint],
-                                startPoint: .leading, endPoint: .trailing
-                            ),
-                            style: StrokeStyle(lineWidth: 12, lineCap: .round)
-                        )
-                        .frame(width: 200, height: 200)
-                        .rotationEffect(.degrees(-90))
-                        .animation(.easeInOut(duration: 0.5), value: progress)
-
-                    VStack(spacing: 4) {
-                        Text(timeString)
-                            .font(.system(size: 44, weight: .bold, design: .monospaced))
-                        Text(mode == .work ? "Focus Time" : "Break")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .textCase(.uppercase)
-                    }
-                }
-
-                // Controls
-                HStack(spacing: 16) {
-                    Button(action: resetTimer) {
-                        Label("Reset", systemImage: "arrow.counterclockwise")
-                            .fontWeight(.semibold)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 14)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(14)
-                    }
-
-                    Button(action: toggleTimer) {
-                        Text(isRunning ? "⏸ Pause" : "▶ Start")
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 36)
-                            .padding(.vertical, 14)
-                            .background(
-                                LinearGradient(colors: [.red, .orange],
-                                               startPoint: .leading, endPoint: .trailing)
-                            )
-                            .cornerRadius(14)
-                            .shadow(color: .red.opacity(0.3), radius: 8, y: 4)
-                    }
-                }
-
-                // Info Card
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("How Pomodoro Works")
-                        .font(.caption.bold())
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                    Text("Work for **25 minutes**, then take a **5 minute break**. After 4 sessions, take a longer break. Repeat to stay in flow! 🍅")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                        .lineSpacing(4)
-                }
-                .padding()
-                .background(Color(.systemBackground))
-                .cornerRadius(16)
-                .padding(.horizontal)
-
-                Spacer()
-            }
-            .padding(.top, 24)
-            .navigationTitle("Focus")
-            .background(Color(.systemGroupedBackground))
-        }
-    }
-
-    func toggleTimer() {
-        if isRunning {
-            timer?.invalidate()
-            timer = nil
-            isRunning = false
-        } else {
-            isRunning = true
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-                if timeRemaining > 0 {
-                    timeRemaining -= 1
-                } else {
-                    timer?.invalidate()
-                    timer = nil
-                    isRunning = false
-                }
-            }
-        }
-    }
-
-    func resetTimer() {
-        timer?.invalidate()
-        timer = nil
-        isRunning = false
-        timeRemaining = mode.duration
-    }
-}
-
-// MARK: - Notes View
-
-struct NotesView: View {
+struct SettingsView: View {
     @EnvironmentObject var store: AppStore
-    @State private var showingNewNote = false
+    @State private var showingClearCompletedConfirm = false
+    @State private var showingClearAllConfirm = false
 
-    let columns = [GridItem(.flexible()), GridItem(.flexible())]
+    let goalOptions = [3, 5, 7, 10, 15, 20]
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                if store.notes.isEmpty {
-                    VStack(spacing: 8) {
-                        Text("📝").font(.system(size: 52))
-                        Text("No notes yet").font(.headline)
-                        Text("Tap + to create your first note.")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                    .padding(60)
-                } else {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach($store.notes) { $note in
-                            NavigationLink(destination: NoteEditorView(note: $note)) {
-                                NoteCard(note: note)
-                            }
-                            .buttonStyle(.plain)
+            List {
+
+                // Profile
+                Section(header: Text("Profile")) {
+                    HStack(spacing: 14) {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(colors: [.red, .orange],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 52, height: 52)
+                            Text(store.userName.prefix(1).uppercased())
+                                .font(.title2.bold())
+                                .foregroundColor(.white)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(store.userName).font(.headline)
+                            Text("\(store.completedCount) tasks completed")
+                                .font(.caption).foregroundColor(.secondary)
                         }
                     }
-                    .padding()
+                    .padding(.vertical, 4)
+
+                    HStack {
+                        Label("Your Name", systemImage: "person")
+                        Spacer()
+                        TextField("Name", text: $store.userName)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundColor(.secondary)
+                    }
                 }
-            }
-            .navigationTitle("Notes")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+
+                // Preferences
+                Section(header: Text("Preferences")) {
+                    HStack {
+                        Label("Daily Goal", systemImage: "target")
+                        Spacer()
+                        Picker("", selection: $store.dailyGoal) {
+                            ForEach(goalOptions, id: \.self) { g in
+                                Text("\(g) tasks").tag(g)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+                    Toggle(isOn: $store.notificationsEnabled) {
+                        Label("Notifications", systemImage: "bell")
+                    }
+                    .tint(.red)
+                }
+
+                // Stats
+                Section(header: Text("Your Stats")) {
+                    SettingsStatRow(label: "Total Tasks",     value: "\(store.totalCount)",     icon: "list.bullet",           color: .blue)
+                    SettingsStatRow(label: "Completed",       value: "\(store.completedCount)", icon: "checkmark.circle.fill", color: .green)
+                    SettingsStatRow(label: "Pending",         value: "\(store.pendingCount)",   icon: "clock",                 color: .orange)
+                    SettingsStatRow(label: "Completion Rate",
+                                   value: store.totalCount == 0 ? "—" : "\(Int(store.progress * 100))%",
+                                   icon: "chart.pie.fill", color: .purple)
+                }
+
+                // Data
+                Section(header: Text("Data")) {
                     Button {
-                        store.notes.append(NoteItem(title: "Untitled Note", body: ""))
+                        showingClearCompletedConfirm = true
                     } label: {
-                        Image(systemName: "plus.circle.fill")
+                        Label("Clear Completed Tasks", systemImage: "trash")
+                            .foregroundColor(.orange)
+                    }
+                    .confirmationDialog("Clear completed tasks?",
+                                        isPresented: $showingClearCompletedConfirm,
+                                        titleVisibility: .visible) {
+                        Button("Clear Completed", role: .destructive) {
+                            store.checklistItems.removeAll { $0.isDone }
+                        }
+                    }
+
+                    Button {
+                        showingClearAllConfirm = true
+                    } label: {
+                        Label("Clear All Tasks", systemImage: "exclamationmark.triangle")
                             .foregroundColor(.red)
-                            .imageScale(.large)
+                    }
+                    .confirmationDialog("Delete everything?",
+                                        isPresented: $showingClearAllConfirm,
+                                        titleVisibility: .visible) {
+                        Button("Delete Everything", role: .destructive) {
+                            store.checklistItems.removeAll()
+                        }
+                    }
+                }
+
+                // About
+                Section(header: Text("About")) {
+                    HStack {
+                        Label("Version", systemImage: "info.circle")
+                        Spacer()
+                        Text("1.0.0").foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Label("Built with", systemImage: "swift")
+                        Spacer()
+                        Text("SwiftUI").foregroundColor(.secondary)
                     }
                 }
             }
-            .background(Color(.systemGroupedBackground))
+            .listStyle(.insetGrouped)
+            .navigationTitle("Settings")
         }
     }
 }
 
-struct NoteCard: View {
-    let note: NoteItem
+// MARK: - Settings Stat Row
+
+struct SettingsStatRow: View {
+    let label: String
+    let value: String
+    let icon: String
+    let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(note.title)
-                .font(.subheadline.bold())
-                .foregroundColor(.primary)
-                .lineLimit(2)
-
-            Text(note.body.isEmpty ? "Empty note" : note.body)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(4)
-
+        HStack {
+            Label(label, systemImage: icon).foregroundColor(.primary)
             Spacer()
-
-            Text(note.date, style: .date)
-                .font(.system(size: 10))
-                .foregroundColor(Color(.tertiaryLabel))
+            Text(value).font(.subheadline.bold()).foregroundColor(color)
         }
-        .padding()
-        .frame(minHeight: 120, alignment: .topLeading)
-        .background(Color(.systemBackground))
-        .cornerRadius(14)
-        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
-    }
-}
-
-struct NoteEditorView: View {
-    @Binding var note: NoteItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            TextField("Title", text: $note.title)
-                .font(.title2.bold())
-                .padding(.horizontal)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            Divider().padding(.horizontal)
-
-            TextEditor(text: $note.body)
-                .font(.body)
-                .padding(.horizontal, 12)
-        }
-        .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemBackground))
     }
 }
 
@@ -569,10 +563,10 @@ extension Color {
     }
 }
 
-// MARK: - Previews
+// MARK: - Preview
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        MainTabView()
+        MainTabView().environmentObject(AppStore())
     }
 }
